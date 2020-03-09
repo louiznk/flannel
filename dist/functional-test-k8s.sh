@@ -83,8 +83,8 @@ start_flannel() {
        docker rm -f flannel-e2e-test-flannel$host_num >/dev/null 2>/dev/null
        docker run -e NODE_NAME=flannel$host_num --privileged --name flannel-e2e-test-flannel$host_num -id --entrypoint /bin/sh $FLANNEL_DOCKER_IMAGE >/dev/null
        docker exec flannel-e2e-test-flannel$host_num /bin/sh -c 'mkdir -p /etc/kube-flannel'
-       echo $flannel_conf | docker exec -i flannel-e2e-test-flannel$host_num /bin/sh -c 'cat > /etc/kube-flannel/net-conf.json'
-       docker exec -d flannel-e2e-test-flannel$host_num /opt/bin/flanneld --kube-subnet-mgr --kube-api-url $k8s_endpt
+       echo "$flannel_conf" | docker exec -i flannel-e2e-test-flannel$host_num /bin/sh -c 'cat > /etc/kube-flannel/net-conf.json'
+       docker exec -d flannel-e2e-test-flannel$host_num /opt/bin/flanneld --kube-subnet-mgr --ip-masq --kube-api-url $k8s_endpt
        while ! docker exec flannel-e2e-test-flannel$host_num ls /run/flannel/subnet.env >/dev/null 2>&1; do
          sleep 0.1
        done
@@ -108,6 +108,7 @@ test_vxlan() {
     start_flannel vxlan
     create_ping_dest # creates ping_dest1 and ping_dest2 variables
     pings
+    check_iptables
 }
 
 if [[ ${ARCH} == "amd64" ]]; then
@@ -115,6 +116,7 @@ test_udp() {
     start_flannel udp
     create_ping_dest # creates ping_dest1 and ping_dest2 variables
     pings
+    check_iptables
 }
 fi
 
@@ -122,12 +124,14 @@ test_host-gw() {
     start_flannel host-gw
     create_ping_dest # creates ping_dest1 and ping_dest2 variables
     pings
+    check_iptables
 }
 
 test_ipip() {
     start_flannel ipip
     create_ping_dest # creates ping_dest1 and ping_dest2 variables
     pings
+    check_iptables
 }
 
 test_public-ip-overwrite(){
@@ -153,6 +157,37 @@ pings() {
     # ping in both directions
 	assert "docker exec --privileged flannel-e2e-test-flannel1 /bin/ping -c 5 $ping_dest2" "Host 1 cannot ping host 2"
 	assert "docker exec --privileged flannel-e2e-test-flannel2 /bin/ping -c 5 $ping_dest1" "Host 2 cannot ping host 1"
+}
+
+check_iptables() {
+  read -r -d '' POSTROUTING_RULES_FLANNEL1 << EOM
+-P POSTROUTING ACCEPT
+-A POSTROUTING -s 10.10.0.0/16 -d 10.10.0.0/16 -j RETURN
+-A POSTROUTING -s 10.10.0.0/16 ! -d 224.0.0.0/4 -j MASQUERADE --random-fully
+-A POSTROUTING ! -s 10.10.0.0/16 -d 10.10.1.0/24 -j RETURN
+-A POSTROUTING ! -s 10.10.0.0/16 -d 10.10.0.0/16 -j MASQUERADE --random-fully
+EOM
+  read -r -d '' POSTROUTING_RULES_FLANNEL2 << EOM
+-P POSTROUTING ACCEPT
+-A POSTROUTING -s 10.10.0.0/16 -d 10.10.0.0/16 -j RETURN
+-A POSTROUTING -s 10.10.0.0/16 ! -d 224.0.0.0/4 -j MASQUERADE --random-fully
+-A POSTROUTING ! -s 10.10.0.0/16 -d 10.10.2.0/24 -j RETURN
+-A POSTROUTING ! -s 10.10.0.0/16 -d 10.10.0.0/16 -j MASQUERADE --random-fully
+EOM
+  read -r -d '' FORWARD_RULES << EOM
+-P FORWARD ACCEPT
+-A FORWARD -s 10.10.0.0/16 -j ACCEPT
+-A FORWARD -d 10.10.0.0/16 -j ACCEPT
+EOM
+  # check masquerade & forward rules
+  assert_equals "$POSTROUTING_RULES_FLANNEL1" \
+                "$(docker exec --privileged flannel-e2e-test-flannel1 /sbin/iptables -t nat -S POSTROUTING)" "Host 1 has not expected postrouting rules"
+  assert_equals "$POSTROUTING_RULES_FLANNEL2" \
+                "$(docker exec --privileged flannel-e2e-test-flannel2 /sbin/iptables -t nat -S POSTROUTING)" "Host 2 has not expected postrouting rules"
+  assert_equals "$FORWARD_RULES" \
+                "$(docker exec --privileged flannel-e2e-test-flannel1 /sbin/iptables -t filter -S FORWARD)" "Host 1 has not expected forward rules"
+  assert_equals "$FORWARD_RULES" \
+                "$(docker exec --privileged flannel-e2e-test-flannel2 /sbin/iptables -t filter -S FORWARD)" "Host 2 has not expected forward rules"
 }
 
 test_manifest() {

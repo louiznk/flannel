@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !windows
 // +build !windows
 
 package network
@@ -41,6 +42,11 @@ type MockIPTables struct {
 	failures map[string]*MockIPTablesError
 }
 
+type MockIPTablesRestore struct {
+	t     *testing.T
+	rules []IPTablesRestoreRules
+}
+
 type MockIPTablesError struct {
 	notExist bool
 }
@@ -62,6 +68,16 @@ func (mock *MockIPTables) failDelete(table string, chain string, rulespec []stri
 	mock.failures[key] = &MockIPTablesError{
 		notExist: notExist,
 	}
+}
+
+func (mock *MockIPTablesRestore) ApplyFully(rules IPTablesRestoreRules) error {
+	mock.rules = []IPTablesRestoreRules{rules}
+	return nil
+}
+
+func (mock *MockIPTablesRestore) ApplyPartial(rules IPTablesRestoreRules) error {
+	mock.rules = append(mock.rules, rules)
+	return nil
 }
 
 func (mock *MockIPTables) ruleIndex(table string, chain string, rulespec []string) int {
@@ -104,24 +120,105 @@ func (mock *MockIPTables) AppendUnique(table string, chain string, rulespec ...s
 }
 
 func TestDeleteRules(t *testing.T) {
-	ipt := &MockIPTables{t: t}
-	setupIPTables(ipt, MasqRules(ip.IP4Net{}, lease()))
+	ipt := &MockIPTables{}
+	iptr := &MockIPTablesRestore{}
+
+	baseRules := []IPTablesRule{
+		{"filter", "INPUT", []string{"-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"}},
+		{"filter", "INPUT", []string{"-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"}},
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"}},
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"}},
+	}
+
+	expectedRules := IPTablesRestoreRules{
+		"filter": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-D", "INPUT", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-D", "INPUT", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+		"nat": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-D", "POSTROUTING", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-D", "POSTROUTING", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+	}
+
+	ipTablesBootstrap(ipt, iptr, baseRules)
+	setupIPTables(ipt, baseRules)
 	if len(ipt.rules) != 4 {
 		t.Errorf("Should be 4 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
 	}
-	teardownIPTables(ipt, MasqRules(ip.IP4Net{}, lease()))
-	if len(ipt.rules) != 0 {
-		t.Errorf("Should be 0 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
+
+	iptr.rules = []IPTablesRestoreRules{}
+	err := teardownIPTables(ipt, iptr, baseRules)
+	if err != nil {
+		return
+	}
+	if !reflect.DeepEqual(iptr.rules, []IPTablesRestoreRules{expectedRules}) {
+		t.Errorf("Should be 0 masqRules, there are actually. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
+	}
+}
+
+func TestBootstrapRules(t *testing.T) {
+	iptr := &MockIPTablesRestore{}
+	ipt := &MockIPTables{}
+
+	baseRules := []IPTablesRule{
+		{"filter", "INPUT", []string{"-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"}},
+		{"filter", "INPUT", []string{"-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"}},
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"}},
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"}},
+	}
+
+	ipTablesBootstrap(ipt, iptr, baseRules)
+	// Ensure iptable mock has rules too
+	setupIPTables(ipt, baseRules)
+
+	expectedRules := IPTablesRestoreRules{
+		"filter": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-A", "INPUT", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-A", "INPUT", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+		"nat": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+	}
+
+	if !reflect.DeepEqual(iptr.rules, []IPTablesRestoreRules{expectedRules}) {
+		t.Errorf("iptables masqRules after ensureIPTables are incorrected. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
+	}
+
+	iptr.rules = []IPTablesRestoreRules{}
+
+	expectedRules = IPTablesRestoreRules{
+		"filter": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-D", "INPUT", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-A", "INPUT", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-D", "INPUT", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+			IPTablesRestoreRuleSpec{"-A", "INPUT", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+		"nat": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-D", "POSTROUTING", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-D", "POSTROUTING", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+	}
+	// Re-run ensure has new operations
+	ipTablesBootstrap(ipt, iptr, baseRules)
+	if !reflect.DeepEqual(iptr.rules, []IPTablesRestoreRules{expectedRules}) {
+		t.Errorf("iptables masqRules after ensureIPTables are incorrected. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
 	}
 }
 
 func TestDeleteIP6Rules(t *testing.T) {
 	ipt := &MockIPTables{t: t}
+	iptr := &MockIPTablesRestore{t: t}
+
 	setupIPTables(ipt, MasqIP6Rules(ip.IP6Net{}, lease()))
 	if len(ipt.rules) != 4 {
 		t.Errorf("Should be 4 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
 	}
-	teardownIPTables(ipt, MasqIP6Rules(ip.IP6Net{}, lease()))
+	teardownIPTables(ipt, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
 	if len(ipt.rules) != 0 {
 		t.Errorf("Should be 0 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
 	}
@@ -132,6 +229,9 @@ func TestEnsureRulesError(t *testing.T) {
 	// rather than potentially re-appending rules in an incorrect order
 	ipt_correct := &MockIPTables{t: t}
 	setupIPTables(ipt_correct, MasqRules(ip.IP4Net{}, lease()))
+	//FIXME
+	iptr := &MockIPTablesRestore{}
+	iptr.rules = []IPTablesRestoreRules{}
 	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
 	ipt_recreate := &MockIPTables{t: t}
 	setupIPTables(ipt_recreate, MasqRules(ip.IP4Net{}, lease()))
@@ -139,7 +239,7 @@ func TestEnsureRulesError(t *testing.T) {
 
 	rule := ipt_recreate.rules[1]
 	ipt_recreate.failDelete(rule.table, rule.chain, rule.rulespec, false)
-	err := ensureIPTables(ipt_recreate, MasqRules(ip.IP4Net{}, lease()))
+	err := ensureIPTables(ipt_recreate, iptr, MasqRules(ip.IP4Net{}, lease()))
 	if err == nil {
 		t.Errorf("ensureIPTables should have failed but did not.")
 	}
@@ -154,6 +254,9 @@ func TestEnsureIP6RulesError(t *testing.T) {
 	// rather than potentially re-appending rules in an incorrect order
 	ipt_correct := &MockIPTables{t: t}
 	setupIPTables(ipt_correct, MasqIP6Rules(ip.IP6Net{}, lease()))
+	//FIXME
+	iptr := &MockIPTablesRestore{}
+	iptr.rules = []IPTablesRestoreRules{}
 	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
 	ipt_recreate := &MockIPTables{t: t}
 	setupIPTables(ipt_recreate, MasqIP6Rules(ip.IP6Net{}, lease()))
@@ -161,7 +264,7 @@ func TestEnsureIP6RulesError(t *testing.T) {
 
 	rule := ipt_recreate.rules[1]
 	ipt_recreate.failDelete(rule.table, rule.chain, rule.rulespec, false)
-	err := ensureIPTables(ipt_recreate, MasqIP6Rules(ip.IP6Net{}, lease()))
+	err := ensureIPTables(ipt_recreate, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
 	if err == nil {
 		t.Errorf("ensureIPTables should have failed but did not.")
 	}
@@ -172,26 +275,47 @@ func TestEnsureIP6RulesError(t *testing.T) {
 }
 
 func TestEnsureRules(t *testing.T) {
-	// If any masqRules are missing, they should be all deleted and recreated in the correct order
-	ipt_correct := &MockIPTables{t: t}
-	setupIPTables(ipt_correct, MasqRules(ip.IP4Net{}, lease()))
-	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
-	ipt_recreate := &MockIPTables{t: t}
-	setupIPTables(ipt_recreate, MasqRules(ip.IP4Net{}, lease()))
-	ipt_recreate.rules = ipt_recreate.rules[0:2]
-	// set up a normal error that iptables returns when deleting a rule that is already gone
-	deletedRule := ipt_correct.rules[3]
-	ipt_recreate.failDelete(deletedRule.table, deletedRule.chain, deletedRule.rulespec, true)
-	err := ensureIPTables(ipt_recreate, MasqRules(ip.IP4Net{}, lease()))
-	if err != nil {
-		t.Errorf("ensureIPTables should have completed without errors")
+	iptr := &MockIPTablesRestore{}
+	ipt := &MockIPTables{}
+
+	// Ensure iptable mock has other rules
+	otherRules := []IPTablesRule{
+		{"nat", "POSTROUTING", []string{"-A", "POSTROUTING", "-j", "KUBE-POSTROUTING"}},
 	}
-	if !reflect.DeepEqual(ipt_recreate.rules, ipt_correct.rules) {
-		t.Errorf("iptables masqRules after ensureIPTables are incorrect. Expected: %#v, Actual: %#v", ipt_recreate.rules, ipt_correct.rules)
+	setupIPTables(ipt, otherRules)
+
+	baseRules := []IPTablesRule{
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"}},
+		{"nat", "POSTROUTING", []string{"-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"}},
+	}
+
+	ensureIPTables(ipt, iptr, baseRules)
+	// Ensure iptable mock has rules too
+	setupIPTables(ipt, baseRules)
+
+	expectedRules := IPTablesRestoreRules{
+		"nat": []IPTablesRestoreRuleSpec{
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "-d", "127.0.0.1", "-j", "RETURN"},
+			IPTablesRestoreRuleSpec{"-A", "POSTROUTING", "-s", "127.0.0.1", "!", "-d", "224.0.0.0/4", "-j", "MASQUERADE", "--random-fully"},
+		},
+	}
+
+	if !reflect.DeepEqual(iptr.rules, []IPTablesRestoreRules{expectedRules}) {
+		t.Errorf("iptables masqRules after ensureIPTables are incorrected. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
+	}
+
+	iptr.rules = []IPTablesRestoreRules{}
+	// Re-run ensure no new operations
+	ensureIPTables(ipt, iptr, baseRules)
+	if len(iptr.rules) > 0 {
+		t.Errorf("iptables masqRules after ensureIPTables are incorrected. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
 	}
 }
 
 func TestEnsureIP6Rules(t *testing.T) {
+	// FIXME version de base, mettre à jours
+	iptr := &MockIPTablesRestore{}
+	iptr.rules = []IPTablesRestoreRules{}
 	// If any masqRules are missing, they should be all deleted and recreated in the correct order
 	ipt_correct := &MockIPTables{t: t}
 	setupIPTables(ipt_correct, MasqIP6Rules(ip.IP6Net{}, lease()))
@@ -202,11 +326,22 @@ func TestEnsureIP6Rules(t *testing.T) {
 	// set up a normal error that iptables returns when deleting a rule that is already gone
 	deletedRule := ipt_correct.rules[3]
 	ipt_recreate.failDelete(deletedRule.table, deletedRule.chain, deletedRule.rulespec, true)
-	err := ensureIPTables(ipt_recreate, MasqIP6Rules(ip.IP6Net{}, lease()))
+	err := ensureIPTables(ipt_recreate, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
 	if err != nil {
 		t.Errorf("ensureIPTables should have completed without errors")
 	}
 	if !reflect.DeepEqual(ipt_recreate.rules, ipt_correct.rules) {
 		t.Errorf("iptables masqIP6Rules after ensureIPTables are incorrect. Expected: %#v, Actual: %#v", ipt_recreate.rules, ipt_correct.rules)
 	}
+}
+
+func setupIPTables(ipt IPTables, rules []IPTablesRule) error {
+	for _, rule := range rules {
+		err := ipt.AppendUnique(rule.table, rule.chain, rule.rulespec...)
+		if err != nil {
+			return fmt.Errorf("failed to insert IPTables rule: %v", err)
+		}
+	}
+
+	return nil
 }
