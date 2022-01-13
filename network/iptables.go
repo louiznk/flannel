@@ -159,13 +159,13 @@ func ipTablesCleanAndBuild(ipt IPTables, rules []IPTablesRule) (IPTablesRestoreR
 func ipTablesBootstrap(ipt IPTables, iptRestore IPTablesRestore, rules []IPTablesRule) error {
 	tablesRules, err := ipTablesCleanAndBuild(ipt, rules)
 	if err != nil {
-		// if we can't find iptables, give up and return
-		return fmt.Errorf("Failed to setup IPTables-restore payload: %v", err)
+		// if we can't find iptables or if we can check existing rules, give up and return
+		return fmt.Errorf("failed to setup iptables-restore payload: %v", err)
 	}
 
-	log.V(6).Infof("trying to run iptable-restore < %+v", tablesRules)
+	log.V(6).Infof("trying to run iptables-restore < %+v", tablesRules)
 
-	err = iptRestore.ApplyPartial(tablesRules)
+	err = iptRestore.ApplyWithoutFlush(tablesRules)
 	if err != nil {
 		return fmt.Errorf("failed to apply partial iptables-restore %v", err)
 	}
@@ -184,8 +184,8 @@ func SetupAndEnsureIPTables(rules []IPTablesRule, resyncPeriod int) {
 	}
 	iptRestore, err := NewIPTablesRestore()
 	if err != nil {
-		// if we can't find iptables, give up and return
-		log.Errorf("Failed to setup IPTables. iptables binary was not found: %v", err)
+		// if we can't find iptables-restore, give up and return
+		log.Errorf("Failed to setup IPTables. iptables-restore binary was not found: %v", err)
 		return
 	}
 
@@ -219,7 +219,7 @@ func SetupAndEnsureIP6Tables(rules []IPTablesRule, resyncPeriod int) {
 	iptRestore, err := NewIPTablesRestore()
 	if err != nil {
 		// if we can't find iptables, give up and return
-		log.Errorf("Failed to setup IPTables-restore: %v", err)
+		log.Errorf("Failed to setup iptables-restore: %v", err)
 		return
 	}
 
@@ -254,7 +254,7 @@ func DeleteIPTables(rules []IPTablesRule) error {
 	iptRestore, err := NewIPTablesRestore()
 	if err != nil {
 		// if we can't find iptables, give up and return
-		log.Errorf("Failed to setup IPTables-restore: %v", err)
+		log.Errorf("Failed to setup iptables-restore: %v", err)
 		return err
 	}
 	err = teardownIPTables(ipt, iptRestore, rules)
@@ -277,7 +277,7 @@ func DeleteIP6Tables(rules []IPTablesRule) error {
 	iptRestore, err := NewIPTablesRestoreWithProtocol(iptables.ProtocolIPv6)
 	if err != nil {
 		// if we can't find iptables, give up and return
-		log.Errorf("Failed to setup IPTables-restore: %v", err)
+		log.Errorf("Failed to setup iptables-restore: %v", err)
 		return err
 	}
 	err = teardownIPTables(ipt, iptRestore, rules)
@@ -291,7 +291,7 @@ func DeleteIP6Tables(rules []IPTablesRule) error {
 func ensureIPTables(ipt IPTables, iptRestore IPTablesRestore, rules []IPTablesRule) error {
 	exists, err := ipTablesRulesExist(ipt, rules)
 	if err != nil {
-		return fmt.Errorf("Error checking rule existence: %v", err)
+		return fmt.Errorf("error checking rule existence: %v", err)
 	}
 	if exists {
 		// if all the rules already exist, no need to do anything
@@ -303,7 +303,7 @@ func ensureIPTables(ipt IPTables, iptRestore IPTablesRestore, rules []IPTablesRu
 	err = ipTablesBootstrap(ipt, iptRestore, rules)
 	if err != nil {
 		// if we can't find iptables, give up and return
-		return fmt.Errorf("Error setting up rules: %v", err)
+		return fmt.Errorf("error setting up rules: %v", err)
 	}
 	return nil
 }
@@ -325,7 +325,7 @@ func teardownIPTables(ipt IPTables, iptr IPTablesRestore, rules []IPTablesRule) 
 			tablesRules[rule.table] = append(tablesRules[rule.table], append(IPTablesRestoreRuleSpec{"-D", rule.chain}, rule.rulespec...))
 		}
 	}
-	err := iptr.ApplyPartial(tablesRules) // ApplyPartial make a diff, Apply make a replace (desired state)
+	err := iptr.ApplyWithoutFlush(tablesRules) // ApplyWithoutFlush make a diff, Apply make a replace (desired state)
 	if err != nil {
 		return fmt.Errorf("unable to teardown iptables: %v", err)
 	}

@@ -75,7 +75,7 @@ func (mock *MockIPTablesRestore) ApplyFully(rules IPTablesRestoreRules) error {
 	return nil
 }
 
-func (mock *MockIPTablesRestore) ApplyPartial(rules IPTablesRestoreRules) error {
+func (mock *MockIPTablesRestore) ApplyWithoutFlush(rules IPTablesRestoreRules) error {
 	mock.rules = append(mock.rules, rules)
 	return nil
 }

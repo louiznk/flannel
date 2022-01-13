@@ -38,15 +38,15 @@ const (
 type IPTablesRestore interface {
 	// ApplyFully apply all rules and flush chains
 	ApplyFully(rules IPTablesRestoreRules) error
-	// ApplyPartial apply without flush chains
-	ApplyPartial(rules IPTablesRestoreRules) error
+	// ApplyWithoutFlush apply without flush chains
+	ApplyWithoutFlush(rules IPTablesRestoreRules) error
 }
 
 // ipTablesRestore internal type
 type ipTablesRestore struct {
-	path     string
-	protocol iptables.Protocol
-	hasWait  bool
+	path    string
+	proto   iptables.Protocol
+	hasWait bool
 }
 
 // IPTablesRestoreRules represents iptables-restore table block
@@ -60,7 +60,7 @@ func NewIPTablesRestore() (IPTablesRestore, error) {
 	return NewIPTablesRestoreWithProtocol(iptables.ProtocolIPv4)
 }
 
-// NewIPTablesRestoreWithProtocol build new IPTablesRestore for supplied protocol
+// NewIPTablesRestoreWithProtocol build new IPTablesRestore for supplied proto
 func NewIPTablesRestoreWithProtocol(protocol iptables.Protocol) (IPTablesRestore, error) {
 	cmd := getIptablesRestoreCommand(protocol)
 	path, err := exec.LookPath(cmd)
@@ -73,9 +73,9 @@ func NewIPTablesRestoreWithProtocol(protocol iptables.Protocol) (IPTablesRestore
 	}
 
 	ipt := ipTablesRestore{
-		path:     path,
-		protocol: protocol,
-		hasWait:  hasWait,
+		path:    path,
+		proto:   protocol,
+		hasWait: hasWait,
 	}
 	return &ipt, nil
 }
@@ -92,8 +92,8 @@ func (iptr *ipTablesRestore) ApplyFully(rules IPTablesRestoreRules) error {
 	return nil
 }
 
-// ApplyPartial apply without flush chains
-func (iptr *ipTablesRestore) ApplyPartial(rules IPTablesRestoreRules) error {
+// ApplyWithoutFlush apply without flush chains
+func (iptr *ipTablesRestore) ApplyWithoutFlush(rules IPTablesRestoreRules) error {
 	payload := buildIPTablesRestorePayload(rules)
 
 	log.V(6).Infof("trying to run with payload %s", payload)
@@ -158,10 +158,10 @@ func ipTablesHasWaitSupport(v1, v2, v3 int) bool {
 	if v1 > 1 {
 		return true
 	}
-	if v1 == 1 && v2 > 4 {
+	if v1 == 1 && v2 > 6 {
 		return true
 	}
-	if v1 == 1 && v2 == 4 && v3 >= 20 {
+	if v1 == 1 && v2 == 6 && v3 >= 2 {
 		return true
 	}
 	return false
@@ -205,7 +205,7 @@ func getIptablesRestoreVersionString(path string) (string, error) {
 	return out.String(), nil
 }
 
-// getIptablesRestoreCommand returns the correct command for the given protocol, either "iptables-restore" or "ip6tables-restore".
+// getIptablesRestoreCommand returns the correct command for the given proto, either "iptables-restore" or "ip6tables-restore".
 func getIptablesRestoreCommand(proto iptables.Protocol) string {
 	if proto == iptables.ProtocolIPv6 {
 		return ip6TablesRestoreCmd
