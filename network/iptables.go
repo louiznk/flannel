@@ -311,7 +311,7 @@ func ensureIPTables(ipt IPTables, iptRestore IPTablesRestore, rules []IPTablesRu
 func teardownIPTables(ipt IPTables, iptr IPTablesRestore, rules []IPTablesRule) error {
 	tablesRules := IPTablesRestoreRules{}
 
-	// Build delete rules
+	// Build delete rules to a transaction for iptables restore
 	for _, rule := range rules {
 		exists, err := ipt.Exists(rule.table, rule.chain, rule.rulespec...)
 		if err != nil {
@@ -325,7 +325,7 @@ func teardownIPTables(ipt IPTables, iptr IPTablesRestore, rules []IPTablesRule) 
 			tablesRules[rule.table] = append(tablesRules[rule.table], append(IPTablesRestoreRuleSpec{"-D", rule.chain}, rule.rulespec...))
 		}
 	}
-	err := iptr.ApplyPartial(tablesRules)
+	err := iptr.ApplyPartial(tablesRules) // ApplyPartial make a diff, Apply make a replace (desired state)
 	if err != nil {
 		return fmt.Errorf("unable to teardown iptables: %v", err)
 	}

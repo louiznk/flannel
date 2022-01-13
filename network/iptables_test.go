@@ -120,6 +120,26 @@ func (mock *MockIPTables) AppendUnique(table string, chain string, rulespec ...s
 }
 
 func TestDeleteRules(t *testing.T) {
+	ipt := &MockIPTables{t: t}
+	iptr := &MockIPTablesRestore{t: t}
+	baseRules := MasqRules(ip.IP4Net{}, lease())
+	expectedRules := expectedTearDownIPTablesRestoreRules(baseRules)
+
+	ipTablesBootstrap(ipt, iptr, baseRules)
+	setupIPTables(ipt, baseRules)
+	if len(ipt.rules) != 4 {
+		t.Errorf("Should be 4 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
+	}
+
+	iptr.rules = []IPTablesRestoreRules{}
+	teardownIPTables(ipt, iptr, baseRules)
+	if !reflect.DeepEqual(expectedRules, iptr.rules) {
+		t.Errorf("Incorrect restores rules, Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
+	}
+
+}
+
+func TestDeleteMoreRules(t *testing.T) {
 	ipt := &MockIPTables{}
 	iptr := &MockIPTablesRestore{}
 
@@ -153,7 +173,7 @@ func TestDeleteRules(t *testing.T) {
 		return
 	}
 	if !reflect.DeepEqual(iptr.rules, []IPTablesRestoreRules{expectedRules}) {
-		t.Errorf("Should be 0 masqRules, there are actually. Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
+		t.Errorf("Incorrect restores rules, Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
 	}
 }
 
@@ -214,63 +234,20 @@ func TestDeleteIP6Rules(t *testing.T) {
 	ipt := &MockIPTables{t: t}
 	iptr := &MockIPTablesRestore{t: t}
 
-	setupIPTables(ipt, MasqIP6Rules(ip.IP6Net{}, lease()))
+	baseRules := MasqIP6Rules(ip.IP6Net{}, lease())
+	expectedRules := expectedTearDownIPTablesRestoreRules(baseRules)
+
+	ipTablesBootstrap(ipt, iptr, baseRules)
+	setupIPTables(ipt, baseRules)
+
 	if len(ipt.rules) != 4 {
 		t.Errorf("Should be 4 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
 	}
-	teardownIPTables(ipt, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
-	if len(ipt.rules) != 0 {
-		t.Errorf("Should be 0 masqRules, there are actually %d: %#v", len(ipt.rules), ipt.rules)
-	}
-}
 
-func TestEnsureRulesError(t *testing.T) {
-	// If an error prevents a rule from being deleted, ensureIPTables should leave the rules as is
-	// rather than potentially re-appending rules in an incorrect order
-	ipt_correct := &MockIPTables{t: t}
-	setupIPTables(ipt_correct, MasqRules(ip.IP4Net{}, lease()))
-	//FIXME
-	iptr := &MockIPTablesRestore{}
 	iptr.rules = []IPTablesRestoreRules{}
-	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
-	ipt_recreate := &MockIPTables{t: t}
-	setupIPTables(ipt_recreate, MasqRules(ip.IP4Net{}, lease()))
-	ipt_recreate.rules = ipt_recreate.rules[0:2]
-
-	rule := ipt_recreate.rules[1]
-	ipt_recreate.failDelete(rule.table, rule.chain, rule.rulespec, false)
-	err := ensureIPTables(ipt_recreate, iptr, MasqRules(ip.IP4Net{}, lease()))
-	if err == nil {
-		t.Errorf("ensureIPTables should have failed but did not.")
-	}
-
-	if len(ipt_recreate.rules) == len(ipt_correct.rules) {
-		t.Errorf("ensureIPTables should not have completed.")
-	}
-}
-
-func TestEnsureIP6RulesError(t *testing.T) {
-	// If an error prevents a rule from being deleted, ensureIPTables should leave the rules as is
-	// rather than potentially re-appending rules in an incorrect order
-	ipt_correct := &MockIPTables{t: t}
-	setupIPTables(ipt_correct, MasqIP6Rules(ip.IP6Net{}, lease()))
-	//FIXME
-	iptr := &MockIPTablesRestore{}
-	iptr.rules = []IPTablesRestoreRules{}
-	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
-	ipt_recreate := &MockIPTables{t: t}
-	setupIPTables(ipt_recreate, MasqIP6Rules(ip.IP6Net{}, lease()))
-	ipt_recreate.rules = ipt_recreate.rules[0:2]
-
-	rule := ipt_recreate.rules[1]
-	ipt_recreate.failDelete(rule.table, rule.chain, rule.rulespec, false)
-	err := ensureIPTables(ipt_recreate, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
-	if err == nil {
-		t.Errorf("ensureIPTables should have failed but did not.")
-	}
-
-	if len(ipt_recreate.rules) == len(ipt_correct.rules) {
-		t.Errorf("ensureIPTables should not have completed.")
+	teardownIPTables(ipt, iptr, baseRules)
+	if !reflect.DeepEqual(expectedRules, iptr.rules) {
+		t.Errorf("Incorrect restores rules, Expected: %#v, Actual: %#v", expectedRules, iptr.rules)
 	}
 }
 
@@ -312,29 +289,6 @@ func TestEnsureRules(t *testing.T) {
 	}
 }
 
-func TestEnsureIP6Rules(t *testing.T) {
-	// FIXME version de base, mettre à jours
-	iptr := &MockIPTablesRestore{}
-	iptr.rules = []IPTablesRestoreRules{}
-	// If any masqRules are missing, they should be all deleted and recreated in the correct order
-	ipt_correct := &MockIPTables{t: t}
-	setupIPTables(ipt_correct, MasqIP6Rules(ip.IP6Net{}, lease()))
-	// setup a mock instance where we delete some masqRules and run `ensureIPTables`
-	ipt_recreate := &MockIPTables{t: t}
-	setupIPTables(ipt_recreate, MasqIP6Rules(ip.IP6Net{}, lease()))
-	ipt_recreate.rules = ipt_recreate.rules[0:2]
-	// set up a normal error that iptables returns when deleting a rule that is already gone
-	deletedRule := ipt_correct.rules[3]
-	ipt_recreate.failDelete(deletedRule.table, deletedRule.chain, deletedRule.rulespec, true)
-	err := ensureIPTables(ipt_recreate, iptr, MasqIP6Rules(ip.IP6Net{}, lease()))
-	if err != nil {
-		t.Errorf("ensureIPTables should have completed without errors")
-	}
-	if !reflect.DeepEqual(ipt_recreate.rules, ipt_correct.rules) {
-		t.Errorf("iptables masqIP6Rules after ensureIPTables are incorrect. Expected: %#v, Actual: %#v", ipt_recreate.rules, ipt_correct.rules)
-	}
-}
-
 func setupIPTables(ipt IPTables, rules []IPTablesRule) error {
 	for _, rule := range rules {
 		err := ipt.AppendUnique(rule.table, rule.chain, rule.rulespec...)
@@ -344,4 +298,16 @@ func setupIPTables(ipt IPTables, rules []IPTablesRule) error {
 	}
 
 	return nil
+}
+
+func expectedTearDownIPTablesRestoreRules(rules []IPTablesRule) []IPTablesRestoreRules {
+	tablesRules := IPTablesRestoreRules{}
+	for _, rule := range rules {
+		if _, ok := tablesRules[rule.table]; !ok {
+			tablesRules[rule.table] = []IPTablesRestoreRuleSpec{}
+		}
+		tablesRules[rule.table] = append(tablesRules[rule.table], append(IPTablesRestoreRuleSpec{"-D", rule.chain}, rule.rulespec...))
+	}
+
+	return []IPTablesRestoreRules{tablesRules}
 }
