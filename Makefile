@@ -15,7 +15,7 @@ else
 endif
 
 # Go version to use for builds
-GO_VERSION=1.15.5
+GO_VERSION=1.16
 
 # K8s version used for Makefile helpers
 K8S_VERSION=v1.6.6
@@ -73,7 +73,7 @@ test: header-check gofmt verify-modules
 	# Run the unit tests
 	# NET_ADMIN capacity is required to do some network operation
 	# SYS_ADMIN capacity is required to create network namespace
-	docker run --cap-add=NET_ADMIN --cap-add=SYS_ADMIN --rm -v $(shell pwd):/go/src/github.com/flannel-io/flannel golang:$(GO_VERSION) go test -v -cover $(TEST_PACKAGES_EXPANDED)
+	docker run --cap-add=NET_ADMIN --cap-add=SYS_ADMIN --rm -v $(shell pwd):/go/src/github.com/flannel-io/flannel -w /go/src/github.com/flannel-io/flannel golang:$(GO_VERSION) go test -v -cover $(TEST_PACKAGES_EXPANDED)
 
 	# Test the docker-opts script
 	cd dist; ./mk-docker-opts_tests.sh
