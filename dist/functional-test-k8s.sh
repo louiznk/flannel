@@ -26,12 +26,14 @@ setup_suite() {
     # Run etcd, killing any existing one that was running
 
     # Start etcd
+    docker pull etcd
     docker rm -f flannel-e2e-test-etcd >/dev/null 2>/dev/null
     docker run --name=flannel-e2e-test-etcd -d -p 2379:2379 -e ETCD_UNSUPPORTED_ARCH=${ARCH} $ETCD_IMG etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls $etcd_endpt >/dev/null
     sleep 1
 
     # Start a kubernetes API server
     docker rm -f flannel-e2e-k8s-apiserver >/dev/null 2>/dev/null
+    docker pull ${HYPERKUBE_IMG}:v$K8S_VERSION
     docker run -d --net=host --name flannel-e2e-k8s-apiserver ${HYPERKUBE_IMG}:v$K8S_VERSION \
       ${HYPERKUBE_CMD} ${HYPERKUBE_APISERVER_CMD} --etcd-servers=$etcd_endpt \
       --service-cluster-ip-range=10.101.0.0/16 --insecure-bind-address=0.0.0.0 --allow-privileged >/dev/null
@@ -78,7 +80,6 @@ start_flannel() {
     local backend=$1
 
     flannel_conf="{ \"Network\": \"$FLANNEL_NET\", \"Backend\": { \"Type\": \"${backend}\" } }"
-
     for host_num in 1 2; do
        docker rm -f flannel-e2e-test-flannel$host_num >/dev/null 2>/dev/null
 

@@ -47,6 +47,7 @@ dist/flanneld.exe: $(shell find . -type f  -name '*.go')
 # This will build flannel natively using golang image
 dist/flanneld-$(ARCH): dist/qemu-$(ARCH)-static
 	# valid values for ARCH are [amd64 arm arm64 ppc64le s390x mips64le]
+	docker pull golang:$(GO_VERSION)
 	docker run --rm -e CGO_ENABLED=$(CGO_ENABLED) -e GOARCH=$(ARCH) -e GOCACHE=/go \
 		-u $(shell id -u):$(shell id -g) \
 		-v $(CURDIR)/dist/qemu-$(ARCH)-static:/usr/bin/qemu-$(ARCH)-static \
@@ -73,6 +74,7 @@ test: header-check gofmt verify-modules
 	# Run the unit tests
 	# NET_ADMIN capacity is required to do some network operation
 	# SYS_ADMIN capacity is required to create network namespace
+	docker pull golang:$(GO_VERSION)
 	docker run --cap-add=NET_ADMIN \
 		--cap-add=SYS_ADMIN --rm \
 		-v $(shell pwd):/go/src/github.com/flannel-io/flannel \
@@ -101,6 +103,7 @@ header-check:
 # Throw an error if gofmt finds problems.
 # "read" will return a failure return code if there is no output. This is inverted wth the "!"
 gofmt:
+	docker pull golang:$(GO_VERSION)
 	docker run --rm -e CGO_ENABLED=$(CGO_ENABLED) -e GOARCH=$(ARCH) \
 		-u $(shell id -u):$(shell id -g) \
 		-v $(CURDIR):/go/src/github.com/flannel-io/flannel \
@@ -110,6 +113,7 @@ gofmt:
 		! gofmt -d $(PACKAGES) 2>&1 | read'
 
 verify-modules:
+	docker pull golang:$(GO_VERSION)
 	docker run --rm -e CGO_ENABLED=$(CGO_ENABLED) -e GOARCH=$(ARCH) \
                 -u $(shell id -u):$(shell id -g) \
                 -v $(CURDIR):/go/src/github.com/flannel-io/flannel \
@@ -120,6 +124,7 @@ verify-modules:
 		!go vet 2>&1|read'
 
 gofmt-fix:
+	docker pull golang:$(GO_VERSION)
 	docker run --rm -e CGO_ENABLED=$(CGO_ENABLED) -e GOARCH=$(ARCH) \
 		-u $(shell id -u):$(shell id -g) \
 		-v $(CURDIR):/go/src/github.com/flannel-io/flannel \
@@ -138,6 +143,7 @@ ifneq ($(ARCH),amd64)
 	$(MAKE) dist/qemu-$(ARCH)-static
 endif
 	# valid values for ARCH are [amd64 arm arm64 ppc64le s390x mips64le]
+	docker pull golang:$(GO_VERSION)
 	docker run --rm -e GOARM=$(GOARM) -e CGO_ENABLED=$(CGO_ENABLED) -e GOCACHE=/go \
 		-u $(shell id -u):$(shell id -g) \
 		-v $(CURDIR):/go/src/github.com/flannel-io/flannel:ro \
@@ -272,6 +278,7 @@ kubernetes-logs:
 
 LOCAL_IP_ENV?=$(shell ip route get 8.8.8.8 | head -1 | awk '{print $$7}')
 run-etcd: stop-etcd
+	docker pull etcd
 	docker run --detach \
 	-p 2379:2379 \
 	--name flannel-etcd quay.io/coreos/etcd \
@@ -284,6 +291,7 @@ stop-etcd:
 	@-docker rm -f flannel-etcd
 
 run-k8s-apiserver: stop-k8s-apiserver
+	docker pull gcr.io/google_containers/hyperkube-amd64:$(K8S_VERSION)
 	docker run --detach --net=host \
 	  --name calico-k8s-apiserver \
 	gcr.io/google_containers/hyperkube-amd64:$(K8S_VERSION) \

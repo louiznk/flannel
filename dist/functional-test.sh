@@ -25,6 +25,7 @@ setup_suite() {
 
     # Start etcd
     docker rm -f flannel-e2e-test-etcd >/dev/null 2>/dev/null
+    docker pull $ETCD_IMG
     docker run --name=flannel-e2e-test-etcd -d --dns 8.8.8.8 -e ETCD_UNSUPPORTED_ARCH=${ARCH} -p 2379:2379 $ETCD_IMG $ETCD_LOCATION --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls $etcd_endpt >/dev/null
 }
 
@@ -47,6 +48,7 @@ teardown() {
     echo "########## logs for flannel-e2e-test-flannel1 container ##########" 2>&1
     docker logs flannel-e2e-test-flannel1
     docker rm -f flannel-e2e-test-flannel1 flannel-e2e-test-flannel2 flannel-e2e-test-flannel1-iperf flannel-host1 flannel-host2 > /dev/null 2>&1
+    docker pull $ETCDCTL_IMG
     docker run --rm -e ETCDCTL_API=3 $ETCDCTL_IMG etcdctl --endpoints=$etcd_endpt rm /coreos.com/network/config > /dev/null 2>&1
 }
 
@@ -58,7 +60,7 @@ write_config_etcd() {
     else
         flannel_conf="{ \"Network\": \"$FLANNEL_NET\", \"Backend\": { \"Type\": \"${backend}\" } }"
     fi
-
+    docker pull $ETCDCTL_IMG
     while ! docker run --rm -e ETCDCTL_API=3 $ETCDCTL_IMG etcdctl --endpoints=$etcd_endpt put /coreos.com/network/config "$flannel_conf" >/dev/null
     do
         sleep 0.1
@@ -173,6 +175,7 @@ test_wireguard_perf() {
 perf() {
     # Perf test - run iperf server on flannel1 and client on flannel2
     docker rm -f flannel-e2e-test-flannel1-iperf 2>/dev/null
+    # docker pull iperf3:latest ??? image networkstatic/iperf3:latest
     docker run -d --name flannel-e2e-test-flannel1-iperf --net=container:flannel-e2e-test-flannel1 iperf3:latest >/dev/null
     docker run --rm --net=container:flannel-e2e-test-flannel2 iperf3:latest -c $ping_dest1 -B $ping_dest2
 }
@@ -181,6 +184,7 @@ test_multi() {
     flannel_conf_vxlan='{"Network": "10.11.0.0/16", "Backend": {"Type": "vxlan"}}'
     flannel_conf_host_gw='{"Network": "10.12.0.0/16", "Backend": {"Type": "host-gw"}}'
 
+    docker pull $ETCD_IMG
     while ! docker run --rm -e ETCDCTL_API=3 $ETCD_IMG etcdctl --endpoints=$etcd_endpt put /vxlan/network/config "$flannel_conf_vxlan" >/dev/null
     do
         sleep 0.1
